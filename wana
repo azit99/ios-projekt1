@@ -1,0 +1,310 @@
+#!/bin/sh
+POSIXLY_CORRECT=yes
+############################################ FUNCTIONS ########################################################
+SetFilters()
+    {
+       #Ip filter
+       if [ -n "${IP+x}" ]; then
+        FILTER="$FILTER | grep -E "^$IP""   
+       fi
+
+        #uri filter
+        if [ -n "${URI+x}" ]; then
+            FILTER="$FILTER | awk -v regex=\$URI '{test=match(\$7,regex); if(test){print}}'"
+        fi        
+        
+       #before time filter
+        if [ -n "${BEFORE+x}" ]; then
+        FILTER="$FILTER | awk -v refDate=\$BEFORE '{date = \$4;
+                    gsub(/\[/,\"\",date);
+                    gsub(/:/,\"/\",date);
+                    gsub(/Jan/,\"01\",date); gsub(/Feb/,\"02\",date);
+                    gsub(/Mar/,\"03\",date);gsub(/Apr/,\"04\",date);
+                    gsub(/May/,\"05\",date);gsub(/Jun/,\"06\",date);
+                    gsub(/Jul/,\"07\",date);gsub(/Aug/,\"08\",date);
+                    gsub(/Sep/,\"09\",date);gsub(/Oct/,\"10\",date);
+                    gsub(/Nov/,\"11\",date);gsub(/Dec/,\"12\",date);
+                    split(date, part, \"/\");
+                    dateToCompare =part[3]part[2]part[1]part[4]part[5]part[6];
+                    if(refDate > dateToCompare) print \$0}'"
+        fi
+
+        #after time filter
+        if [ -n "${AFTER+x}" ]; then
+        FILTER="$FILTER | awk -v refDate=\$AFTER '{date = \$4;
+                    gsub(/\[/,\"\",date);
+                    gsub(/:/,\"/\",date);
+                    gsub(/Jan/,\"01\",date); gsub(/Feb/,\"02\",date);
+                    gsub(/Mar/,\"03\",date);gsub(/Apr/,\"04\",date);
+                    gsub(/May/,\"05\",date);gsub(/Jun/,\"06\",date);
+                    gsub(/Jul/,\"07\",date);gsub(/Aug/,\"08\",date);
+                    gsub(/Sep/,\"09\",date);gsub(/Oct/,\"10\",date);
+                    gsub(/Nov/,\"11\",date);gsub(/Dec/,\"12\",date);
+                    split(date, part, \"/\");
+                    dateToCompare =part[3]part[2]part[1]part[4]part[5]part[6]
+                    if(refDate < dateToCompare) print \$0}'"
+        fi
+    }
+
+    printIp()
+    {                                #Uniq equivalent  
+        eval "$INPUTREADER $FILTER" | awk '!a[$1]++' | awk '{print $1}'
+    }
+
+    listHosts()
+    {  
+        eval "$INPUTREADER $FILTER" | awk '{print $1}'| awk '!a[$1]++' | while read line; do
+         iporig=$(echo "$line" | awk '{printf("%s", $1)}');
+         hostname=$(host "$line");
+         
+         if [ "$?" = 0 ]; then
+            echo "$hostname" | awk '{print $(NF)}'
+         else
+            echo "$iporig"
+        fi       
+        done 
+    }
+
+    listUri()
+    {
+        eval "$INPUTREADER $FILTER" | awk  '{if($6 != "\"-\"") {print $7}}' | awk '!a[$1]++'
+    }
+
+    HistIP()
+    {
+        eval "$INPUTREADER $FILTER" | awk '{print $1}' | sort | uniq -c | sort -nr |
+             awk '{printf("%s (%s): ",$2 ,$1) ; for (i = 0; i<$1 ; i++) {printf("#")};printf("\n")}'
+    }
+
+    HistLoad()
+    {
+        eval "$INPUTREADER $FILTER" |awk '{
+                                        date = $4;
+                                        gsub( /\[/,"",date);
+                                        gsub( /:/,"/",date);
+                                        gsub(/Jan/,"01",date); gsub(/Feb/,"02",date);
+                                        gsub(/Mar/,"03",date);gsub(/Apr/,"04",date);
+                                        gsub(/May/,"05",date);gsub(/Jun/,"06",date);
+                                        gsub(/Jul/,"07",date);gsub(/Aug/,"08",date);
+                                        gsub(/Sep/,"09",date);gsub(/Oct/,"10",date);
+                                        gsub(/Nov/,"11",date);gsub(/Dec/,"12",date);
+                                        split(date, part, "/");
+                                        dateToCompare =part[3]"-"part[2]"-"part[1]" "part[4]":00"
+                                        print dateToCompare
+                                        }' |
+                                     sort -n | uniq -c | 
+                                     awk '{printf("%s %s (%s): ",$2,$3 ,$1) ; for (i = 0; i<$1 ; i++) {printf("#")};printf("\n")}'
+    }
+
+
+    PrintAllFiltered()
+    {
+        eval "$INPUTREADER $FILTER"
+    }
+
+    CallCommands()
+    {
+         #PRINT IP COMMAND
+        if [ "$listIp" = 0 ]; then
+            printIp
+        fi
+        
+        #HIST IP COMMAND
+        if [ "$histIp" = 0 ]; then
+            HistIP
+        fi
+
+        #LIST HOSTS COMMAND
+        if [ "$listHosts" = 0 ]; then
+            listHosts
+        fi
+
+        #LIST URI COMMAND
+         if [ "$listUri" = 0 ]; then
+            listUri
+        fi
+
+        #HIST IP COMMAND
+         if [ "$histLoad" = 0 ]; then
+            HistLoad            
+        fi
+    }
+
+################################ MAIN BODY #################################################################
+    #Evalueate all params from getopt
+    while true; do
+        case "$1" in
+        -a)
+            #prevent double set
+            if ! [ -z ${AFTER+x} ]; then
+                >&2 echo "This filter is alredy set"
+                exit 1
+            fi        
+            shift 1
+            #check required argument
+            if [ -z ${1+x} ]; then
+                >&2 echo "Missing argument for -a"
+                exit 1
+            fi        
+
+             #validate and save time
+            echo $1 | grep -E "[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9]" >/dev/null
+            if  [ $? -eq "0" ]; then
+                 AFTER=$(echo "$1" | tr -d - | tr -d : | tr -d ' ')
+            else 
+                >&2 echo "wrong time format"
+                exit 1
+            fi
+            ;;
+        -b)
+            #prevent double set
+            if ! [ -z ${BEFORE+x} ]; then
+                >&2 echo "This filter is alredy set"
+                exit 1
+            fi    
+            shift 1
+            #check required argument
+            if [ -z ${1+x} ]; then
+                >&2 echo "Missing argument for -b"
+                exit 1
+            fi
+            
+             #validate and save time
+            echo $1 | grep -E "[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9]" >/dev/null
+            if [ $? -eq "0" ]; then
+                 BEFORE=$(echo "$1" | tr -d - | tr -d : | tr -d ' ')
+            else 
+                >&2 echo "wrong time format"
+                exit 1
+            fi
+            ;;
+        -ip)
+             #prevent double set
+            if ! [ -z ${IP+x} ]; then
+                >&2 echo "This filter is alredy set"
+                exit 1
+            fi    
+            shift 1
+
+            #check required argument
+            if [ -z ${1+x} ]; then
+                >&2 echo "Missing argument for -ip"
+                exit 1
+            fi
+
+            #validate and save Ip
+            ipv6="^([0-9A-Fa-f]{0,4}:){2,7}([0-9A-Fa-f]{1,4}$|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.|$)){4})$"
+            ipv4="^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+            echo $1 | grep -E "$ipv6|$ipv4" >/dev/null
+            if [ $? -eq "0" ];then                
+                IP=$1
+            else 
+                >&2 echo "Wrong ip format"
+                exit 1
+            fi
+            ;;
+
+        -uri)
+            #prevent double set
+            if ! [ -z ${URI+x} ]; then
+                >&2 echo "This filter is alredy set"
+                exit 1
+            fi  
+            shift 1
+            #check required argument
+            if [ -z ${1+x} ]; then
+                >&2 echo "Missing argument for -uri"
+                exit 1
+            fi
+            URI=$1
+            ;;
+
+        *)
+            break
+            ;;
+        esac
+        shift
+        
+        #end of args list
+        if [ -z ${1+x} ]; then
+        break
+        fi
+
+    done
+
+    #parse optional comand
+    case "$1" in
+        list-ip)
+            listIp=0
+            haveCommand=0
+            shift
+            ;;
+
+        list-hosts)
+            haveCommand=0
+            listHosts=0
+            shift
+            ;;
+
+        list-uri)
+            haveCommand=0
+            listUri=0
+            shift
+            ;;
+
+        hist-ip)
+            haveCommand=0
+            histIp=0
+            shift
+            ;;
+
+        hist-load)
+            haveCommand=0
+            histLoad=0
+            shift
+            ;;
+        esac
+
+SetFilters
+
+#if file wasn't given process stdin
+if  [ -z ${1+x} ]; then
+    INPUTREADER="cat"
+    CallCommands
+fi
+
+#save content of all files into 
+while [ -n "${1+x}" ]
+do
+    #check if file is valid
+    fileName=$1
+    if [ ! -f "$fileName" ]; then
+        >&2 echo "File $fileName not found!"
+        exit 1
+    fi
+
+    #check if file is zipped
+    fileext="$(echo "$fileName" | tail -c 4)"
+
+    if [ "$fileext" = ".gz" ]; then
+    {
+        INPUT="$INPUT$(zcat "$fileName")"
+    }
+    else
+    {
+        INPUT="$INPUT$(cat "$fileName")"
+    }
+    fi
+    shift
+    INPUTREADER="echo \"\$INPUT\""
+done
+
+##################### Procesing data from files ##############################################
+    #NO COMMAND
+    if [ -z ${haveCommand+x} ];then
+        PrintAllFiltered
+    fi
+
+    #CALL GIVEN COMMANDS
+    CallCommands
+####################################################################################################
